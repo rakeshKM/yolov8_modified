@@ -3,7 +3,7 @@ from copy import copy
 
 import numpy as np
 
-from tasks import multitaskModel
+from tasks import multitaskModel,multitaskModel_detect,DetectionModel
 from val import   multitaskValidator
 from trainer import BaseTrainer
 from ultralytics.yolo import v8
@@ -76,7 +76,7 @@ class MultitaskTrainer(BaseTrainer):
         self.model.args = self.args  # attach hyperparameters to model
         # TODO: self.model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc
 
-    def get_model(self, cfg='yolov8-multitask.yaml', weights=None, verbose=True):
+    def get_model(self, cfg='yolov8-multitask_detect.yaml', weights=None, verbose=True):
         """Return a YOLO mulit task model."""
         model = multitaskModel(cfg, nc=self.data['nc'], verbose=verbose and RANK == -1)
         if weights:
@@ -131,9 +131,9 @@ class MultitaskTrainer(BaseTrainer):
 def train(cfg=DEFAULT_CFG, use_python=False):
     """Train and optimize YOLO model given training data and device."""
     #model = cfg.model #or 'yolov8n.pt'
-    model = '/data/rakesh/YOLOv8/ultralytics/ultralytics/models/v8/yolov8-multitask.yaml'
-    #model= multitaskModel()
-    data = cfg.data or 'coco128.yaml'  # or yolo.ClassificationDataset("mnist")
+    model = '/data/rakesh/YOLOv8/ultralytics/ultralytics/yolo/v8/multi_task/yolov8-multitask_detect.yaml'
+    
+    data = cfg.data or 'coco8-pose.yaml'  # or yolo.ClassificationDataset("mnist")
     device = cfg.device if cfg.device is not None else ''
     print(type(data))
     args = dict(model=model, data=data, device=device)

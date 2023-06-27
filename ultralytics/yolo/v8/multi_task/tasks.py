@@ -339,16 +339,36 @@ class multitaskModel(BaseModel):
         if nc and nc != self.yaml['nc']:
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
             self.yaml['nc'] = nc  # override yaml value
+        
         self.model, self.save = parse_model_multitask(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist #TODO modified
         self.names = {i: f'{i}' for i in range(self.yaml['nc'])}  # default names dict
         self.inplace = self.yaml.get('inplace', True)
+        '''
+         # Build model
+        for i, (from_, block, args) in enumerate(block_cfg[1:]):
+            
+            block = eval(block) if isinstance(block, str) else block  # eval strings
+            if block is Detect:
+                self.detector_index = i
+            block_ = block(*args)
+            block_.index, block_.from_ = i, from_
+            layers.append(block_)
+            #print("blocks",block_)
+            save.extend(x % i for x in ([from_] if isinstance(from_, int) else from_) if x != -1)  # append to savelist
+        assert self.detector_index == block_cfg[0][0]
+        layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
+        for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
+            m = getattr(torch.nn, m[3:]) if 'nn.' in m else globals()[m]  # get module
+        self.model, self.save = nn.Sequential(*layers), sorted(save)
+        '''
+
         #print(self.model)
         #print(self.save)
         self.det_out_idx =  22 #TODO added
         self.seg_out_idx =  23 #TODO added
         self.pose_out_idx = 24 #TODO added
 
-        # Build strides for detection model 
+        # Build model
         m = self.model[self.det_out_idx]  # Detect() model
         #print(torch.zeros(1, ch, 256, 256).shape,type(torch.zeros(1, ch, 256, 256)))
         if isinstance(m, (Detect, Segment, Pose)):
@@ -378,8 +398,95 @@ class multitaskModel(BaseModel):
             self.info()
             LOGGER.info('')
         #print(m)
+    def forward(self, x, *args, **kwargs):
+        """
+        Forward pass of the model on a single scale.
+        Wrapper for `_forward_once` method.
+
+        Args:
+            x (torch.Tensor | dict): The input image tensor or a dict including image tensor and gt labels.
+
+        Returns:
+            (torch.Tensor): The output of the network.
+        """
+        if isinstance(x, dict):  # for cases of training and validating while training.
+            return self.loss(x, *args, **kwargs)
+        return self.predict(x, *args, **kwargs)
+
+    def predict(self, x, profile=False, visualize=False, augment=False):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+            augment (bool): Augment image during prediction, defaults to False.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        if augment:
+            return self._predict_augment(x)
+        return self._predict_once(x, profile, visualize)
+
+    def _predict_once(self, x, profile=False, visualize=False):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        cache = []
+        out = []
+        det_out = None
+        for  block in self.model:
+            # block.i, block.f, block.type = i, f, t  # attach index, 'from' index, type
+            if block.f != -1:       # if not from previous layer
+                #print("i am here")
+                x = cache[block.f] if isinstance(block.f, int) else [x if j == -1 else cache[j] for j in block.f]  # from earlier layers
+            #print("failing block",block.i)
+            x = block(x)
+            if block.i == self.seg_out_idx:     # seg_out in forward
+                #m=nn.Sigmoid()           #TODO check if rewuired
+                #out.append(m(x))
+                out.append(x[0])
+                
+            if block.i == self.pose_out_idx:    # pose_out in forwad pass
+                #m=nn.Sigmoid()           #TODO check if rewuired
+                #out.append(m(x))
+                out.append(x[0])
+
+            if block.i == self.det_out_idx:
+                det_out = x
+
+            #cache.append(x if block.index in self.save else None) #TODO
+            cache.append(x if block.i in self.save else None) #TODO
+
+        out.insert(0,det_out) 
+        return out
+    def loss(self, batch, preds=None):
+        """
+        Compute loss
+
+        Args:
+            batch (dict): Batch to compute loss on
+            preds (torch.Tensor | List[torch.Tensor]): Predictions.
+        """
+        if not hasattr(self, 'criterion'):
+            self.criterion = self.init_criterion()
+        return self.criterion(self.predict(batch['img']) if preds is None else preds, batch)
+
     
-    def forward(self, x):
+    def init_criterion(self):
+        """returning all three losses"""
+        return v8DetectionLoss(self)
+    def forward_(self, x):
         cache = []
         out = []
         det_out = None
@@ -424,7 +531,119 @@ class multitaskModel(BaseModel):
     def init_criterion(self):
         """returning all three losses"""
         return v8DetectionLoss(self)#,v8SegmentationLoss(self),v8PoseLoss(self) #TODO need to figure it how to use this
+
+
+class multitaskModel_detect(BaseModel):
+    def __init__(self, cfg='yolov8-multitask_detect.yaml', ch=3, nc=None, verbose=True):  # model, input channels, number of classes  #TODO modified
+        super().__init__()
+        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+
+        # Define model
+        ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
+        if nc and nc != self.yaml['nc']:
+            LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+            self.yaml['nc'] = nc  # override yaml value
+        
+        self.model, self.save = parse_model_multitask(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist #TODO modified
+        
+        self.names = {i: f'{i}' for i in range(self.yaml['nc'])}  # default names dict
+        self.inplace = self.yaml.get('inplace', True)
+        #print(self.model)
+        #print(self.save)
+        self.det_out_idx =  22 #TODO added
+
+        # Build strides for detection model 
+        m = self.model[self.det_out_idx]  # Detect() model
+        #print(torch.zeros(1, ch, 256, 256).shape,type(torch.zeros(1, ch, 256, 256)))
+        if isinstance(m, (Detect, Segment, Pose)):
+            s = 256  # 2x min stride
+            m.inplace = self.inplace
+            #forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose)) else self.forward(x)
+            detect_out = self.forward(torch.zeros(1, ch, s, s)) #TODO added            
+            m.stride = torch.tensor([s / x.shape[-2] for x in detect_out])  # forward
+            self.stride = m.stride
+            m.bias_init()  # only run once
+
     
+        # Init weights, biases
+        initialize_weights(self)
+        if verbose:
+            self.info()
+            LOGGER.info('')
+        #print(m)
+    def forward(self, x, *args, **kwargs):
+        """
+        Forward pass of the model on a single scale.
+        Wrapper for `_forward_once` method.
+
+        Args:
+            x (torch.Tensor | dict): The input image tensor or a dict including image tensor and gt labels.
+
+        Returns:
+            (torch.Tensor): The output of the network.
+        """
+        if isinstance(x, dict):  # for cases of training and validating while training.
+            return self.loss(x, *args, **kwargs)
+        return self.predict(x, *args, **kwargs)
+
+    def predict(self, x, profile=False, visualize=False, augment=False):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+            augment (bool): Augment image during prediction, defaults to False.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        if augment:
+            return self._predict_augment(x)
+        return self._predict_once(x, profile, visualize)
+
+    def _predict_once(self, x, profile=False, visualize=False):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        y, dt = [], []  # outputs
+        for m in self.model:
+            if m.f != -1:  # if not from previous layer
+                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+            if profile:
+                self._profile_one_layer(m, x, dt)
+            x = m(x)  # run
+            y.append(x if m.i in self.save else None)  # save output
+            if visualize:
+                feature_visualization(x, m.type, m.i, save_dir=visualize)
+        return x
+    def loss(self, batch, preds=None):
+        """
+        Compute loss
+
+        Args:
+            batch (dict): Batch to compute loss on
+            preds (torch.Tensor | List[torch.Tensor]): Predictions.
+        """
+        if not hasattr(self, 'criterion'):
+            self.criterion = self.init_criterion()
+        return self.criterion(self.predict(batch['img']) if preds is None else preds, batch)
+
+    
+    def init_criterion(self):
+        """returning all three losses"""
+        return v8DetectionLoss(self)
+    
+
 class ClassificationModel(BaseModel):
     """YOLOv8 classification model."""
 

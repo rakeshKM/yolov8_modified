@@ -42,6 +42,7 @@ class PoseTrainer(v8.detect.DetectionTrainer):
         kpts = batch['keypoints']
         cls = batch['cls'].squeeze(-1)
         bboxes = batch['bboxes']
+        #bboxes = batch['masks']
         paths = batch['im_file']
         batch_idx = batch['batch_idx']
         plot_images(images,
@@ -70,6 +71,7 @@ def train(cfg=DEFAULT_CFG, use_python=False):
         YOLO(model).train(**args)
     else:
         trainer = PoseTrainer(overrides=args)
+        #trainer.plot_training_samples()
         trainer.train()
 
 

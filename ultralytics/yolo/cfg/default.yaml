@@ -1,7 +1,7 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 # Default training settings and hyperparameters for medium-augmentation COCO training
 
-task: multitask  # YOLO task, i.e. detect, segment, classify, pose,multitask
+task: pose  # YOLO task, i.e. detect, segment, classify, pose,multitask
 mode: train  # YOLO mode, i.e. train, val, predict, export, track, benchmark
 
 # Train settings -------------------------------------------------------------------------------------------------------

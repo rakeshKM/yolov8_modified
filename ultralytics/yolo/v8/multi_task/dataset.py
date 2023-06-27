@@ -10,10 +10,12 @@ import torch
 import torchvision
 from tqdm import tqdm
 
-from ..utils import LOCAL_RANK, NUM_THREADS, TQDM_BAR_FORMAT, is_dir_writeable
-from .augment import Compose, Format, Instances, LetterBox, classify_albumentations, classify_transforms, v8_transforms
-from .base import BaseDataset
-from .utils import HELP_URL, LOGGER, get_hash, img2label_paths, verify_image_label,verify_image_label_modified
+
+from utils import LOCAL_RANK, NUM_THREADS, TQDM_BAR_FORMAT, is_dir_writeable,HELP_URL, LOGGER, get_hash, img2label_paths, verify_image_label
+
+from utils import LOCAL_RANK, NUM_THREADS, TQDM_BAR_FORMAT, is_dir_writeable
+from base import BaseDataset
+
 
 
 class YOLODataset(BaseDataset):
@@ -31,11 +33,11 @@ class YOLODataset(BaseDataset):
     cache_version = '1.0.2'  # dataset labels *.cache version, >= 1.0.0 for YOLOv8
     rand_interp_methods = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4]
 
-    def __init__(self, *args, data=None, use_segments=True, use_keypoints=True, **kwargs):
+    def __init__(self, *args, data=None, use_segments=False, use_keypoints=False, **kwargs):
         self.use_segments = use_segments
         self.use_keypoints = use_keypoints
         self.data = data
-        #assert not (self.use_segments and self.use_keypoints), 'Can not use both segments and keypoints.'
+        assert not (self.use_segments and self.use_keypoints), 'Can not use both segments and keypoints.'
         super().__init__(*args, **kwargs)
 
     def cache_labels(self, path=Path('./labels.cache')):
@@ -54,12 +56,10 @@ class YOLODataset(BaseDataset):
             raise ValueError("'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
                              "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'")
         with ThreadPool(NUM_THREADS) as pool:
-            print(self.im_files, self.label_files)
-            results = pool.imap(func=verify_image_label, #TODO
+            results = pool.imap(func=verify_image_label,
                                 iterable=zip(self.im_files, self.label_files, repeat(self.prefix),
                                              repeat(self.use_keypoints), repeat(len(self.data['names'])), repeat(nkpt),
                                              repeat(ndim)))
-            LOGGER.info("data",results)
             pbar = tqdm(results, desc=desc, total=total, bar_format=TQDM_BAR_FORMAT)
             for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
                 nm += nm_f
@@ -112,7 +112,6 @@ class YOLODataset(BaseDataset):
             assert cache['version'] == self.cache_version  # matches current version
             assert cache['hash'] == get_hash(self.label_files + self.im_files)  # identical hash
         except (FileNotFoundError, AssertionError, AttributeError):
-            print("I am here")
             cache, exists = self.cache_labels(cache_path), False  # run cache ops
 
         # Display cache
@@ -128,7 +127,6 @@ class YOLODataset(BaseDataset):
         # Read cache
         [cache.pop(k) for k in ('hash', 'version', 'msgs')]  # remove items
         labels = cache['labels']
-        LOGGER.info(labels) #TODO
         self.im_files = [lb['im_file'] for lb in labels]  # update im_files
 
         # Check if the dataset is all boxes or all segments
@@ -188,7 +186,6 @@ class YOLODataset(BaseDataset):
         """Collates data samples into batches."""
         new_batch = {}
         keys = batch[0].keys()
-        print(keys)
         values = list(zip(*[list(b.values()) for b in batch]))
         for i, k in enumerate(keys):
             value = values[i]
@@ -278,7 +275,7 @@ class SemanticDataset(BaseDataset):
         """Initialize a SemanticDataset object."""
         super().__init__()
 
-
+mode='train'
 if __name__ =="__main__":
 
     dset= YOLODataset(
